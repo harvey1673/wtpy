@@ -17,9 +17,10 @@ class ContractInfo:
         self.underlying:str = ''        # underlying
         self.strikePrice:float = 0      # 行权价
         self.underlyingScale:float = 0  # 放大倍数
+        self.isCall:bool = True         # 是否看涨期权
 
-        self.openDate:int = 0           # 上市日期
-        self.expireDate:int = 0         # 到期日
+        self.openDate:int = 19000101    # 上市日期
+        self.expireDate:int = 20991231  # 到期日
 
         self.longMarginRatio:float = 0  # 多头保证金率
         self.shortMarginRatio:float = 0 # 空头保证金率
@@ -73,9 +74,12 @@ class ContractMgr:
                     cInfo.product = cObj["product"]                    
                     #股票标准代码为SSE.000001，期货标准代码为SHFE.rb.2010
                     if cInfo.code[:len(cInfo.product)] == cInfo.product:
-                        cInfo.stdCode = exchg + "." + cInfo.product + "." + cInfo.code[len(cInfo.product):]
+                        month = cInfo.code[len(cInfo.product):]
+                        if len(month) < 4:
+                            month = "2" + month
+                        cInfo.stdCode = exchg + "." + cInfo.product + "." + month
                     else:
-                        cInfo.stdCode = exchg + "." + cInfo.code
+                        cInfo.stdCode = exchg + "." + cInfo.product + "." + cInfo.code
 
                     stdPID = exchg + "." + cInfo.product
                     if stdPID not in self.__products__:
@@ -103,13 +107,12 @@ class ContractMgr:
                 if "option" in cObj:
                     oObj = cObj["option"]
                     cInfo.isOption = True
+                    cInfo.isCall = (int(oObj["optiontype"])==49)
                     cInfo.underlying = oObj["underlying"]
                     cInfo.strikePrice = float(oObj["strikeprice"])
                     cInfo.underlyingScale = float(oObj["underlyingscale"])
 
-
-                key = "%s.%s" % (exchg, code)
-                self.__contracts__[key] = cInfo
+                self.__contracts__[cInfo.stdCode] = cInfo
                 if cInfo.isOption:
                     stdUnderlying = f"{exchg}.{cInfo.underlying}"
                     if stdUnderlying not in self.__underlyings__:
@@ -117,47 +120,61 @@ class ContractMgr:
 
                     self.__underlyings__[stdUnderlying].append(cInfo.stdCode)
 
-    def getContractInfo(self, stdCode:str) -> ContractInfo:
+    def getContractInfo(self, stdCode:str, uDate:int = 0) -> ContractInfo:
         '''
         获取合约信息
         @stdCode    合约代码，格式如SHFE.rb.2305
         '''
-        if stdCode[-1] == '+' or stdCode[-1] == '-':
-            stdCode = stdCode[:-1]
-        else:
-            items = stdCode.split(".")
-            if len(items) == 3:
-                stdCode = items[0] + "." + items[1] + items[2]
         if stdCode not in self.__contracts__:
             return None
             
-        return self.__contracts__[stdCode]
+        cInfo:ContractInfo = self.__contracts__[stdCode]
+        if uDate != 0 and (cInfo.openDate > uDate or cInfo.expireDate < uDate):
+            return None
+        
+        return cInfo
 
-    def getTotalCodes(self) -> list:
+    def getTotalCodes(self, uDate:int = 0) -> list:
         '''
         获取全部合约代码列表
+        @uDate  交易日, 格式如20210101
         '''
         codes = list()
         for code in self.__contracts__:
-            codes.append(self.__contracts__[code].stdCode)
+            cInfo:ContractInfo = self.__contracts__[code]
+            if uDate == 0 or (cInfo.openDate <= uDate and cInfo.expireDate >= uDate):
+                codes.append(self.__contracts__[code].stdCode)
         return codes
     
-    def getCodesByUnderlying(self, underlying:str) -> list:
+    def getCodesByUnderlying(self, underlying:str, uDate:int = 0) -> list:
         '''
         根据underlying读取合约列表
         @underlying 格式如CFFEX.IM2304
+        @uDate      交易日, 格式如20210101
         '''
+        ret = list()
         if underlying in self.__underlyings__:
-            return self.__underlyings__[underlying]
-        return []
+            codes = self.__underlyings__[underlying]
+            for code in codes:
+                cInfo:ContractInfo = self.__contracts__[code]
+                if uDate == 0 or (cInfo.openDate <= uDate and cInfo.expireDate >= uDate):
+                    ret.append(self.__contracts__[code].stdCode)
+
+        return ret
     
-    def getCodesByProduct(self, stdPID:str) -> list:
+    def getCodesByProduct(self, stdPID:str, uDate:int = 0) -> list:
         '''
         根据品种代码读取合约列表
-        @stdPID 品种代码，格式如SHFE.rb
+        @stdPID 品种代码, 格式如SHFE.rb
+        @uDate  交易日, 格式如20210101
         '''
+        ret = list()
         if stdPID in self.__products__:
-            return self.__products__[stdPID]
-        return []
+            codes = self.__products__[stdPID]
+            for code in codes:
+                cInfo:ContractInfo = self.__contracts__[code]
+                if uDate == 0 or (cInfo.openDate <= uDate and cInfo.expireDate >= uDate):
+                    ret.append(self.__contracts__[code].stdCode)
+        return ret
         
 
