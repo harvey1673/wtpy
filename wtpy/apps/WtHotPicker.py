@@ -519,17 +519,14 @@ class WtMailNotifier:
         self.mail_port = port
         self.mail_ssl = isSSL
 
-    def add_receiver(self, name:str, addr:str):
+    def add_receiver(self, addr:str):
         '''
         添加收件人
 
         @name   收件人姓名
         @addr   收件人邮箱地址
         '''
-        self.receivers.append({
-            "name":name,
-            "addr":addr
-        })
+        self.receivers.append(addr)
 
     def notify(self, hot_changes:dict, sec_changes:dict, nextDT:datetime.datetime, hotFile:str, hotMap:str, secFile:str, secMap:str):
         '''
@@ -599,29 +596,30 @@ class WtMailNotifier:
             smtpObj = smtplib.SMTP(self.mail_host, self.mail_port)
 
         try:
-            smtpObj.ehlo()
+            #smtpObj.ehlo()
+            smtpObj.starttls()
             smtpObj.login(self.user, self.pwd) 
             logging.info("%s 登录成功 %s:%d", self.user, self.mail_host, self.mail_port)
         except smtplib.SMTPException as ex:
             logging.error("邮箱初始化失败：{}".format(ex))
 
-        for item in receivers:
-            to = "%s<%s>" % (item["name"], item["addr"])
-            msg_mp['To'] =  Header(to, 'utf-8')    # 接收者
-            try:
-                smtpObj.sendmail(sender, item["addr"], msg_mp.as_string())
-                logging.info("邮件发送失败，收件人: %s", to)
-            except smtplib.SMTPException as ex:
-                logging.error("邮件发送失败，收件人：{}, {}".format(to, ex))
+        msg_mp['To'] = ';'.join(receivers)    # 接收者
+        try:
+            smtpObj.sendmail(sender, receivers, msg_mp.as_string())
+            logging.info("邮件发送失败，收件人: %s", ';'.join(receivers))
+        except smtplib.SMTPException as ex:
+            logging.error("邮件发送失败，收件人：{}, {}".format(';'.join(receivers), ex))
+
 
 class WtHotPicker:
     '''
     主力选择器
     '''
-    def __init__(self, markerFile:str = "./marker.json", hotFile:str = "../Common/hots.json", secFile:str = None):
-        self.marker_file = markerFile
-        self.hot_file = hotFile
-        self.sec_file = secFile
+    def __init__(self, files:dict = {'loc': './', 'hot': 'hots.json', 'sec': 'second.json', 'marker': 'marker.json'}):
+        self.file_loc = files['loc']
+        self.marker_file = self.file_loc + files['marker']
+        self.hot_file = self.file_loc + files['hot']
+        self.sec_file = self.file_loc + files['sec']
 
         self.mail_notifier:WtMailNotifier = None
         self.cache_monitor:WtCacheMon = None
@@ -830,7 +828,8 @@ class WtHotPicker:
                 bChanged = True
         return bChanged, total
 
-    def execute_rebuild(self, beginDate:datetime.datetime = None, endDate:datetime.datetime = None, exchanges = ["CFFEX", "SHFE", "CZCE", "DCE", "INE"], wait=False):
+    def execute_rebuild(self, beginDate:datetime.datetime=None, endDate:datetime.datetime = None,
+                        exchanges=["CFFEX", "SHFE", "CZCE", "DCE", "INE", "GFEX"], wait=False):
         '''
         重构全部的主力切换规则
         不依赖现有数据，全部重新确定主力合约的切换规则
@@ -874,7 +873,7 @@ class WtHotPicker:
                     hot_changes[exchg].update(hotRules)
 
                 if len(secRules.keys()) > 0:
-                    hasChange,total_secs = self.merge_switch_list(total_secs, exchg, secRules)
+                    hasChange, total_secs = self.merge_switch_list(total_secs, exchg, secRules)
 
                     if exchg not in sec_changes:
                         sec_changes[exchg] = dict()
@@ -900,20 +899,23 @@ class WtHotPicker:
             output.write(json.dumps(total_secs, sort_keys=True, indent = 4))
             output.close()
 
-        output = open("hotmap.json", 'w')
+        output = open(self.file_loc + "hotmap.json", 'w')
         output.write(json.dumps(self.current_hots, sort_keys=True, indent = 4))
         output.close()
 
-        output = open("secmap.json", 'w')
+        output = open(self.file_loc + "secmap.json", 'w')
         output.write(json.dumps(self.current_secs, sort_keys=True, indent = 4))
         output.close()
 
         if self.mail_notifier is not None:
-            self.mail_notifier.notify(hot_changes, sec_changes, endDate, hotFile, "hotmap.json", secFile, "secmap.json")
-
-        return total_hots,total_secs
+            self.mail_notifier.notify(hot_changes, sec_changes, endDate,
+                                      self.hot_file, self.file_loc + "hotmap.json",
+                                      self.sec_file, self.file_loc + "secmap.json")
+        return total_hots, total_secs
   
-    def execute_increment(self, endDate:datetime.datetime = None, exchanges = ["CFFEX", "SHFE", "CZCE", "DCE", "INE"]):
+    def execute_increment(self,
+                          endDate:datetime.datetime = None,
+                          exchanges=["CFFEX", "SHFE", "CZCE", "DCE", "INE", "GFEX"]):
         '''
         增量更新主力切换规则
         会自动加载marker.json取得上次更新的日期，并读取hots.json确定当前的映射规则
@@ -951,7 +953,7 @@ class WtHotPicker:
         lastDate = str(marker["date"])
         if lastDate >= endDate.strftime('%Y%m%d'):
             logging.info("上次更新日期%s大于结束日期%s，退出更新" % (lastDate, endDate.strftime('%Y%m%d')))
-            exit()
+            return
         elif lastDate != "0":
             beginDT = datetime.datetime.strptime(lastDate, "%Y%m%d") + datetime.timedelta(days=1)
         else:
@@ -1013,15 +1015,17 @@ class WtHotPicker:
             output.write(json.dumps(total_secs, sort_keys=True, indent = 4))
             output.close()
 
-            output = open("hotmap.json", 'w')
+            output = open(self.file_loc + "hotmap.json", 'w')
             output.write(json.dumps(self.current_hots, sort_keys=True, indent = 4))
             output.close()
 
-            output = open("secmap.json", 'w')
+            output = open(self.file_loc + "secmap.json", 'w')
             output.write(json.dumps(self.current_secs, sort_keys=True, indent = 4))
             output.close()
 
             if self.mail_notifier is not None:
-                self.mail_notifier.notify(hot_changes, sec_changes, endDate, hotFile, "hotmap.json", secFile, "secmap.json")
+                self.mail_notifier.notify(hot_changes, sec_changes, endDate,
+                                          hotFile, self.file_loc + "hotmap.json",
+                                          secFile, self.file_loc + "secmap.json")
         else:
             logging.info("主力切换规则未更新，不保存数据")

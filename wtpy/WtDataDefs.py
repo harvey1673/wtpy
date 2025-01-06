@@ -133,7 +133,8 @@ class WtNpKline:
     def to_df(self) -> pd.DataFrame:
         if self.__df__ is None:
             self.__df__ = pd.DataFrame(self.__data__, index=self.bartimes)
-            self.__df__.drop(columns=["time", "reserve"], inplace=True)
+            self.__df__ = (self.__df__.drop(columns=["reserve", "time"]).rename(columns={'open_interest': 'hold', 'turnover': 'money'}))
+            #self.__df__.drop(columns=["time", "reserve"], inplace=True)
             self.__df__["bartime"] = self.__df__.index
         return self.__df__
     
